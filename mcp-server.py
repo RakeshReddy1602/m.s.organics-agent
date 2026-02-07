@@ -7,7 +7,11 @@ from typing import Optional, Dict, Any, List
 mcp = FastMCP('Telugu Vermi Farms Server')
 
 # Base URL for the Telugu Vermi Farms API
-API_BASE_URL = "http://localhost:3000/api"
+import os
+
+# Base URL for the Telugu Vermi Farms API
+# On Render, this should be set to the backend URL (e.g., https://m-s-organics-server.onrender.com/api)
+API_BASE_URL = os.getenv("SERVER_URL", "http://localhost:3000") + "/api"
 
 # Global API key storage
 _API_KEY: Optional[str] = None
