@@ -3,104 +3,27 @@ import requests
 import json
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+import threading
 
 mcp = FastMCP('Telugu Vermi Farms Server')
 
 # Base URL for the Telugu Vermi Farms API
 API_BASE_URL = "http://localhost:3000/api"
 
-# Global API key storage
-_API_KEY: Optional[str] = None
-_API_KEY_EXPIRES_AT: Optional[str] = None
+# Thread-local storage for user tokens
+_thread_local = threading.local()
 
-def fetch_api_key() -> str:
-    """Fetch API key from BE server"""
-    global _API_KEY, _API_KEY_EXPIRES_AT
-    try:
-        print("🔑 Fetching API key from BE server...")
-        response = requests.post(f"{API_BASE_URL}/agent/generate-api-key")
-        response.raise_for_status()
-        data = response.json()
-        if data.get('success') and data.get('data', {}).get('apiKey'):
-            _API_KEY = data['data']['apiKey']
-            _API_KEY_EXPIRES_AT = data['data'].get('expiresAt')
-            print(f"✅ API key obtained: {_API_KEY[:16]}...")
-            if _API_KEY_EXPIRES_AT:
-                print(f"📅 Expires at: {_API_KEY_EXPIRES_AT}")
-            return _API_KEY
-        else:
-            raise Exception("Failed to get API key from response")
-    except Exception as e:
-        print(f"❌ Error fetching API key: {e}")
-        raise
-
-def refresh_api_key() -> Optional[str]:
-    """Refresh the current API key"""
-    global _API_KEY, _API_KEY_EXPIRES_AT
-    try:
-        if not _API_KEY:
-            return fetch_api_key()
-        
-        print("🔄 Refreshing API key...")
-        headers = {'X-API-Key': _API_KEY}
-        response = requests.post(f"{API_BASE_URL}/agent/refresh", headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        if data.get('success') and data.get('data', {}).get('apiKey'):
-            _API_KEY = data['data']['apiKey']
-            _API_KEY_EXPIRES_AT = data['data'].get('expiresAt')
-            print(f"✅ API key refreshed: {_API_KEY[:16]}...")
-            return _API_KEY
-        else:
-            # If refresh fails, generate new key
-            print("⚠️  Refresh failed, generating new key...")
-            return fetch_api_key()
-    except Exception as e:
-        print(f"❌ Error refreshing API key: {e}")
-        # Fall back to generating new key
-        try:
-            return fetch_api_key()
-        except:
-            return None
+def set_user_token(token: str):
+    """Set the user token for the current request context"""
+    _thread_local.user_token = token
 
 def get_auth_headers() -> dict:
-    """Get headers with API key, auto-refresh if needed"""
-    global _API_KEY
+    """Get headers with authorization token if available"""
     headers = {'Content-Type': 'application/json'}
-    
-    # Try to refresh if key is missing
-    if not _API_KEY:
-        try:
-            fetch_api_key()
-        except:
-            pass
-    
-    if _API_KEY:
-        headers['X-API-Key'] = _API_KEY
+    token = getattr(_thread_local, 'user_token', None)
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
     return headers
-
-def handle_api_error(error: Exception, retry_count: int = 0) -> dict:
-    """Handle API errors with automatic retry for 401 (expired key)"""
-    global _API_KEY
-    
-    # If it's a 401, try refreshing the API key and retry
-    if isinstance(error, requests.exceptions.HTTPError) and error.response.status_code == 401:
-        if retry_count < 2:  # Allow up to 2 retries
-            print(f"🔐 API key expired or invalid, attempting refresh (retry {retry_count + 1}/2)...")
-            new_key = refresh_api_key()
-            if new_key:
-                return {"retry": True}
-        return {"error": "Authentication failed: Invalid or expired API key"}
-    
-    return {"error": f"Request failed: {str(error)}"}
-
-# Fetch API key on module import
-try:
-    fetch_api_key()
-except Exception as e:
-    print(f"⚠️  Warning: Could not fetch API key on startup: {e}")
-    print("⚠️  API calls will fail until key is obtained")
 
 # =============================================================================
 # PRODUCT TOOLS
@@ -147,7 +70,7 @@ def get_products_count(q: Optional[str] = None) -> dict:
         if q is not None:
             params["q"] = q
 
-        response = requests.get(f"{API_BASE_URL}/product/count", params=params, headers=get_auth_headers())
+        response = requests.get(f"{API_BASE_URL}/product/count", params=params)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -168,7 +91,7 @@ def create_product(name: str, description: str, image_name: str, image_source_ur
             "image_source_url": image_source_url,
             "price_per_kg": price_per_kg,
         }
-        response = requests.post(f"{API_BASE_URL}/product", json=payload, headers=get_auth_headers())
+        response = requests.post(f"{API_BASE_URL}/product", json=payload)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -204,7 +127,7 @@ def update_product(
         if is_active is not None:
             payload["is_active"] = is_active
 
-        response = requests.put(f"{API_BASE_URL}/product/{id}", json=payload, headers=get_auth_headers())
+        response = requests.put(f"{API_BASE_URL}/product/{id}", json=payload)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -218,7 +141,7 @@ def delete_product(id: int) -> dict:
     Delete a product by ID (soft delete on server).
     """
     try:
-        response = requests.delete(f"{API_BASE_URL}/product/{id}", headers=get_auth_headers())
+        response = requests.delete(f"{API_BASE_URL}/product/{id}")
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -277,7 +200,7 @@ def fetch_stock_batches(
         if offset is not None:
             params["offset"] = offset
 
-        response = requests.get(f"{API_BASE_URL}/stock-batch", params=params, headers=get_auth_headers())
+        response = requests.get(f"{API_BASE_URL}/stock-batch", params=params)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -304,7 +227,7 @@ def create_stock_batch(
             "end_date": end_date,
             "price_per_kg": price_per_kg
         }
-        response = requests.post(f"{API_BASE_URL}/stock-batch", json=payload, headers=get_auth_headers())
+        response = requests.post(f"{API_BASE_URL}/stock-batch", json=payload)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -337,7 +260,7 @@ def update_stock_batch(
         if is_active is not None:
             payload["is_active"] = is_active
 
-        response = requests.put(f"{API_BASE_URL}/stock-batch/{id}", json=payload, headers=get_auth_headers())
+        response = requests.put(f"{API_BASE_URL}/stock-batch/{id}", json=payload)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -351,7 +274,7 @@ def delete_stock_batch(id: int) -> dict:
     Delete a stock batch by ID.
     """
     try:
-        response = requests.delete(f"{API_BASE_URL}/stock-batch/{id}", headers=get_auth_headers())
+        response = requests.delete(f"{API_BASE_URL}/stock-batch/{id}")
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -461,7 +384,7 @@ def fetch_orders(limit: Optional[int] = 10, offset: Optional[int] = 0,
         if delivery_date_to:
             params["deliveryDateTo"] = delivery_date_to
         
-        response = requests.get(f"{API_BASE_URL}/order", params=params, headers=get_auth_headers())
+        response = requests.get(f"{API_BASE_URL}/order", params=params)
         response.raise_for_status()
         
         return response.json()
@@ -489,7 +412,7 @@ def fetch_order_details(order_ids_csv: Optional[str] = None, order_unique_ids_cs
         if order_unique_ids_csv:
             params["orderUniqueIds"] = order_unique_ids_csv
 
-        response = requests.get(f"{API_BASE_URL}/order/order-details", params=params, headers=get_auth_headers())
+        response = requests.get(f"{API_BASE_URL}/order/order-details", params=params)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -531,7 +454,7 @@ def get_orders_count(order_unique_id: Optional[str] = None, customer_name: Optio
         if delivery_date_to:
             params["deliveryDateTo"] = delivery_date_to
         
-        response = requests.get(f"{API_BASE_URL}/order/count", params=params, headers=get_auth_headers())
+        response = requests.get(f"{API_BASE_URL}/order/count", params=params)
         response.raise_for_status()
         
         return response.json()
@@ -556,7 +479,7 @@ def submit_enquiry(enquiry_data: Dict[str, Any]) -> dict:
         dict: Enquiry submission confirmation
     """
     try:
-        response = requests.post(f"{API_BASE_URL}/contact-us/submit-enquiry", json=enquiry_data, headers=get_auth_headers())
+        response = requests.post(f"{API_BASE_URL}/contact-us/submit-enquiry", json=enquiry_data)
         response.raise_for_status()
         
         return response.json()
@@ -574,7 +497,7 @@ def fetch_all_enquiries() -> dict:
         dict: List of all enquiries
     """
     try:
-        response = requests.get(f"{API_BASE_URL}/contact-us/fetch-all", headers=get_auth_headers())
+        response = requests.get(f"{API_BASE_URL}/contact-us/fetch-all")
         response.raise_for_status()
         
         return response.json()
@@ -592,7 +515,7 @@ def get_enquiries_count() -> dict:
         dict: Count of enquiries
     """
     try:
-        response = requests.get(f"{API_BASE_URL}/contact-us/fetch-count", headers=get_auth_headers())
+        response = requests.get(f"{API_BASE_URL}/contact-us/fetch-count")
         response.raise_for_status()
         
         return response.json()
@@ -615,7 +538,7 @@ def check_api_health() -> dict:
     """
     try:
         # Try to fetch products as a health check
-        response = requests.get(f"{API_BASE_URL}/product/fetch-products", timeout=5, headers=get_auth_headers())
+        response = requests.get(f"{API_BASE_URL}/product/fetch-products", timeout=5)
         response.raise_for_status()
         
         return {

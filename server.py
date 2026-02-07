@@ -1,8 +1,11 @@
-
 from client import TeluguVermiFarmsClient
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+import socketio
+from socket_server import sio
+from auth_middleware import get_current_user, JWTPayload
+
 # Initialize FastAPI
 app = FastAPI(
     title="Ila Compost Assistant API",
@@ -26,22 +29,25 @@ app.add_middleware(
 )
 
 assistant = TeluguVermiFarmsClient()
+
 # --- Routes ---
 @app.get("/")
 async def root():
-    return {"message": "Ila compost assistant is running 🌱"}
+    return {"message": "Ila compost assistant is running 🌱", "socket": "enabled"}
 
 @app.post("/chat")
-async def chat(request: Request):
+async def chat(request: Request, user: JWTPayload = Depends(get_current_user)):
     """
     POST /chat
     Body: {"message": "User text"}
     Streams AI response as plain text
+    Requires: JWT authentication via Bearer token
     """
     try:
         data = await request.json()
         user_msg = data.get("message")
         print('User Message ====', user_msg)
+        print('Authenticated User:', user.email)
         if not user_msg:
             return JSONResponse({"error": "Missing 'message' field"}, status_code=400)
         # Fetch history through assistant method so we can change storage later without touching server
@@ -56,4 +62,7 @@ async def chat(request: Request):
         
 
     except Exception as e:
-        return JSONResponse({"error": e}, status_code=500)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# Wrap FastAPI with Socket.IO ASGI app
+socket_app = socketio.ASGIApp(sio, other_asgi_app=app)

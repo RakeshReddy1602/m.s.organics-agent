@@ -258,14 +258,19 @@ class TeluguVermiFarmsClient:
             return None
 
 
-    async def chat_with_assistant_gemini(self, history: List[dict], message: str):
+    async def chat_with_assistant_gemini(self, history: List[dict], message: str, user_token: str = ""):
         """Gemini-based version of chat_with_assistant with tool calls via MCP.
         Uses Redis to persist and retrieve conversation history.
+        
+        Args:
+            history: Chat history
+            message: User message
+            user_token: JWT token for authentication with backend API
         """
         api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         try:
             genai.configure(api_key=api_key)
-            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
             async with MCPOrchestrator() as orchestrator:
                 tools_specs = await orchestrator.get_all_tools_specs()
@@ -521,7 +526,7 @@ class TeluguVermiFarmsClient:
         try:
             api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
             genai.configure(api_key=api_key)
-            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
             model = genai.GenerativeModel(model_name)
 
             # Coerce input to a safe string to satisfy Gemini 'parts' requirements

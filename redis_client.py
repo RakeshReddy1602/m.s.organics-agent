@@ -6,8 +6,14 @@ CHAT_KEY = "admin_chat"
 
 class RedisClient:
     def __init__(self):
-        self.client = redis.Redis(host="localhost", port=6379, db=0)
-        self.client.flushall()
+        import os
+        redis_url = os.getenv("REDIS_URL")
+        if redis_url:
+            self.client = redis.from_url(redis_url)
+        else:
+            host = os.getenv("REDIS_HOST", "localhost")
+            port = int(os.getenv("REDIS_PORT", 6379))
+            self.client = redis.Redis(host=host, port=port, db=0)
 
     def add_message(self, msg: dict):
         self.client.rpush(CHAT_KEY, json.dumps(msg))
