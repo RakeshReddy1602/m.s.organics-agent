@@ -12,9 +12,10 @@ class MCPOrchestrator:
         self.admin_agent_url = admin_agent_url or "http://127.0.0.1:6280/mcp"
         self._clients: Dict[str, MCPClient] = {}
         self._stack: Optional[AsyncExitStack] = None
-        print("MCP Orchestrator initialized in mcp_orchestrator.py")
+        print(f"MCP Orchestrator initialized with URL: {self.admin_agent_url}")
+    
     async def __aenter__(self) -> "MCPOrchestrator":
-        print("starting __aenter__ in mcp_orchestrator.py")
+        print(f"Connecting to MCP Server at {self.admin_agent_url}...")
         self._stack = AsyncExitStack()
         admin_agent_client = MCPClient(self.admin_agent_url)
         print("expense_tracker_client in mcp_orchestrator.py")

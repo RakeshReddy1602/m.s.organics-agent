@@ -272,11 +272,20 @@ class TeluguVermiFarmsClient:
             genai.configure(api_key=api_key)
             model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
+            print(f"Querying Gemini with model: {model_name}")
+            
             async with MCPOrchestrator() as orchestrator:
+                print("Getting tool specs from orchestrator...")
                 tools_specs = await orchestrator.get_all_tools_specs()
+                print(f"Got {len(tools_specs)} tool specs")
                 gemini_tools = self.get_gemini_tools_from_specs(tools_specs)
 
-                model = genai.GenerativeModel(model_name, tools=gemini_tools)
+                try:
+                    model = genai.GenerativeModel(model_name, tools=gemini_tools)
+                    print("Gemini model initialized successfully")
+                except Exception as model_err:
+                    print(f"Failed to initialize Gemini model: {model_err}")
+                    return None
 
                 # Build initial contents with system prompt and prior history (provided by caller)
                 contents = []
@@ -349,12 +358,23 @@ class TeluguVermiFarmsClient:
                     return calls
 
                 # First turn
-                result = await asyncio.to_thread(model.generate_content, contents)
+                print("Sending request to Gemini...")
+                try:
+                    result = await asyncio.to_thread(model.generate_content, contents)
+                    print("Received response from Gemini")
+                except Exception as e:
+                    print(f"Gemini generate_content failed: {e}")
+                    return None
 
                 iterations = 0
                 while iterations < self.MAX_ITERATIONS:
                     iterations += 1
                     function_calls = extract_function_calls(result)
+                    
+                    if function_calls:
+                        print(f"Gemini requested {len(function_calls)} tool calls")
+                    else:
+                        print("No tool calls requested by Gemini")
 
                     if not function_calls:
                         # No tool calls; return model text (safely)

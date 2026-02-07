@@ -84,3 +84,10 @@ async def handle_chat(sid, data):
 async def handle_ping(sid):
     print(f'🏓 Ping from {sid}')
     await sio.emit('pong', {'timestamp': asyncio.get_event_loop().time()}, room=sid)
+
+# Create ASGI app
+app = socketio.ASGIApp(sio)
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=8000)
