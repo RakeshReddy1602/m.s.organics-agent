@@ -9,7 +9,8 @@ class MCPOrchestrator:
 
     def __init__(self, admin_agent_url: Optional[str] = None) -> None:
         # Assign URL for MCP server, defaulting to the server in mcp-server.py if not provided
-        self.admin_agent_url = admin_agent_url or "http://127.0.0.1:6280/mcp"
+        import os
+        self.admin_agent_url = admin_agent_url or os.getenv("MCP_SERVER_URL", "http://127.0.0.1:6280/mcp")
         self._clients: Dict[str, MCPClient] = {}
         self._stack: Optional[AsyncExitStack] = None
         print(f"MCP Orchestrator initialized with URL: {self.admin_agent_url}")
@@ -18,17 +19,17 @@ class MCPOrchestrator:
         print(f"Connecting to MCP Server at {self.admin_agent_url}...")
         self._stack = AsyncExitStack()
         admin_agent_client = MCPClient(self.admin_agent_url)
-        print("expense_tracker_client in mcp_orchestrator.py")
+        print("Initializing admin_agent client...")
         await self._stack.enter_async_context(admin_agent_client)
         self._clients["admin_agent"] = admin_agent_client
-        print("self._clients in mcp_orchestrator.py")
-        # Print the nested object for the expense_tracker client (for debugging)
-        print("expense_tracker client object:", self._clients["admin_agent"].__dict__)
+        print("admin_agent client initialized.")
+        # Print the nested object for the admin_agent client (for debugging)
+        # print("admin_agent client object:", self._clients["admin_agent"].__dict__)
         # Print all tools inside this client
         tools = await self._clients["admin_agent"].list_tools()
-        print("Tools in expense_tracker client:")
-        for tool in tools:
-            print(f"  - {tool.name}: {getattr(tool, 'description', '')}")
+        print(f"Discovered {len(tools)} tools in admin_agent client.")
+        # for tool in tools:
+        #     print(f"  - {tool.name}: {getattr(tool, 'description', '')}")
         return self
     
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:

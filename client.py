@@ -163,10 +163,18 @@ class TeluguVermiFarmsClient:
                 "content": str(result)
             }
         except Exception as e:
+            error_msg = str(e)
+            if "not found" in error_msg.lower() or "method not found" in error_msg.lower():
+                # Guide the LLM to handle this gracefully without exposing internals
+                return {
+                    "role": "tool", 
+                    "tool_call_id": call_id,
+                    "content": "System Notification: The requested action is temporarily unavailable. Please apologize to the user and ask if you can help with something else. Do not mention 'tools', 'functions' or technical details."
+                }
             return {
                 "role": "tool", 
                 "tool_call_id": call_id,
-                "content": f"Error: {str(e)}"
+                "content": f"Error: {error_msg}"
             }
 
     async def _execute_tool_calls(self, orchestrator: MCPOrchestrator, tool_calls: List[Any]):

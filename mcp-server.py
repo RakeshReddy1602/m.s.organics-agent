@@ -689,4 +689,6 @@ def get_api_info() -> dict:
     }
 
 if __name__ == "__main__":
-    mcp.run(transport="http", host="127.0.0.1", port=6280, stateless_http=True)
+    # Use 0.0.0.0 to listen on all interfaces, important for Render
+    # Remove stateless_http=True to enable stateful SSE, which is better for persistent processes
+    mcp.run(transport="sse", host="0.0.0.0", port=6280)
