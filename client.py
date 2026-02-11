@@ -6,7 +6,7 @@ from typing import Any, List
 from openai import OpenAI
 from dotenv import load_dotenv
 from mcp_orchestrator import MCPOrchestrator
-from system_prompt import system_prompt, html_transform_system_prompt
+from system_prompt import system_prompt
 from redis_client import RedisClient, CHAT_KEY
 from google import generativeai as genai
 load_dotenv()
@@ -218,11 +218,20 @@ class TeluguVermiFarmsClient:
             tasks.append(task)
         return await asyncio.gather(*tasks)
 
-    async def chat_with_assistant(self,history:List[dict],message:str):
+    async def chat(self, history: List[dict], message: str, user_token: str = ""):
+        """
+        Unified chat interface that selects the provider based on LLM_PROVIDER env var.
+        """
+        llm_provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+        print(f"Using LLM Provider: {llm_provider}")
+        
+        if llm_provider == "openai":
+            return await self.chat_with_assistant_openai(history, message, user_token)
+        else:
+            return await self.chat_with_assistant_gemini(history, message, user_token)
+
+    async def chat_with_assistant_openai(self, history: List[dict], message: str, user_token: str = ""):
         try:
-            return f"""
-            Here is the order that has been placed: - **Order Unique ID**: O-251005-251125-6ABE-4KKJBSAXC - **Customer**: HariVardhan - **Email**: raki@gamil.com - **Mobile**: 7288076363 - **Delivery Date**: 2025-10-10 - **Order Status**: Approved by Admin - **Address**: - **Line**: 123 Main Street, Apartment 4B - **City**: Hyderabad - **District**: Rangareddy - **Allocated Products**: - **Product Name**: Compost Bin - Medium - **Description**: Durable aerated compost bin designed for 2–3 member households. Easy drainage and odor control for efficient composting. - **Quantity Allocated**: 40 (20 from Batch VBATCH-004A, 10 from Batch VBATCH-004A, 10 from Batch VBATCH-004B) - **Price per kg**: 999 For more details or additional orders, please let me know.
-            """
             async with MCPOrchestrator() as orchestrator:
                 messages = []
                 tools_specs = await orchestrator.get_all_tools_specs()
@@ -230,26 +239,57 @@ class TeluguVermiFarmsClient:
                 if len(history) > 0:
                     messages.extend(history)
                 messages.append({"role": "user", "content": message})
+                
+                # Persist user message
+                try:
+                    self.redis_client.add_message({"role": "user", "content": message})
+                except Exception:
+                    pass
+
                 response = self.client.chat.completions.create(
                     max_tokens=1000,
                     tools=self.get_tools_from_specs(tools_specs),
-                    model="gpt-4",
+                    model="gpt-4o",
                     tool_choice="auto",
-                    messages=messages)
-                message = response.choices[0].message
-                if message.tool_calls:
+                    messages=messages
+                )
+                
+                message_obj = response.choices[0].message
+                
+                if message_obj.tool_calls:
                     # Include the assistant message that initiated the tool calls
-                    messages.append({
+                    assistant_msg_dict = {
                         "role": "assistant",
-                        "content": message.content or "",
-                        "tool_calls": getattr(message, "tool_calls", None)
-                    })
-                    # self.redis_client.add_message(messages)
-                    tool_messages = await self._execute_tool_calls(orchestrator, list(message.tool_calls))
+                        "content": message_obj.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": tc.type,
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments
+                                }
+                            } for tc in message_obj.tool_calls
+                        ]
+                    }
+                    messages.append(assistant_msg_dict)
+                    
+                    # Persist assistant message with tool calls
+                    try:
+                        self.redis_client.add_message(assistant_msg_dict)
+                    except Exception as e:
+                        print(f"Error persisting openai tool call: {e}")
+
+                    tool_messages = await self._execute_tool_calls(orchestrator, list(message_obj.tool_calls))
                     messages.extend(tool_messages)
+                    
+                    # Persist tool results
                     for tool_msg in tool_messages:
-                        pass
-                        # self.redis_client.add_message(tool_msg)
+                        try:
+                            self.redis_client.add_message(tool_msg)
+                        except Exception:
+                            pass
+
                     iterations = 0
                     while iterations < self.MAX_ITERATIONS:
                         iterations += 1
@@ -258,40 +298,72 @@ class TeluguVermiFarmsClient:
                             tools=self.get_tools_from_specs(tools_specs),
                             model="gpt-4o",
                             tool_choice="auto",
-                            messages=messages)
+                            messages=messages
+                        )
                         follow_up_message = follow_up_response.choices[0].message
+                        
                         if follow_up_message.tool_calls:
-                            print(f"🔧 Executing {len(follow_up_message.tool_calls)} tool call(s)...")
-                            # Append assistant message with tool_calls before tool results
-                            messages.append({
+                            print(f"🔧 [OpenAI] Executing {len(follow_up_message.tool_calls)} tool call(s)...")
+                            
+                            assistant_followup_dict = {
                                 "role": "assistant",
                                 "content": follow_up_message.content or "",
-                                "tool_calls": getattr(follow_up_message, "tool_calls", None)
-                            })
-                            # self.redis_client.add_message(messages)
+                                "tool_calls": [
+                                    {
+                                        "id": tc.id,
+                                        "type": tc.type,
+                                        "function": {
+                                            "name": tc.function.name,
+                                            "arguments": tc.function.arguments
+                                        }
+                                    } for tc in follow_up_message.tool_calls
+                                ]
+                            }
+                            messages.append(assistant_followup_dict)
+                            
+                            try:
+                                self.redis_client.add_message(assistant_followup_dict)
+                            except Exception:
+                                pass
+
                             additional_tool_messages = await self._execute_tool_calls(orchestrator, list(follow_up_message.tool_calls))
-                            print('Additional Tool Messages : ',additional_tool_messages)
                             messages.extend(additional_tool_messages)
-                            # for tool_msg in additional_tool_messages:
-                            #     self.redis_client.add_message(tool_msg)
+                            
+                            for tool_msg in additional_tool_messages:
+                                try:
+                                    self.redis_client.add_message(tool_msg)
+                                except Exception:
+                                    pass
                         else:
-                            print('No tool calls in follow up message')
+                            print('[OpenAI] No tool calls in follow up message')
+                            final_content = follow_up_message.content or ""
                             messages.append({
                                 "role": "assistant",
-                                "content": follow_up_message.content or ""
+                                "content": final_content
                             })
-                            # self.redis_client.add_message(messages)
-                            if follow_up_message.content:
-                                print(f"\n🤖 Telugu Vermi Farms Assistant: {follow_up_message.content}")
-                                return follow_up_message.content
-                            break
+                            
+                            try:
+                                self.redis_client.add_message({"role": "assistant", "content": final_content})
+                            except Exception:
+                                pass
+                                
+                            return final_content
                     else:
                         print("Reached the maximum number of iterations for tool calls.")
-                        print("\n🤖 Telugu Vermi Farms Assistant: I've completed all the required actions. Is there anything else I can help you with?")
-                        return message.content
+                        final_msg = "I've completed all the required actions. Is there anything else I can help you with?"
+                        try:
+                            self.redis_client.add_message({"role": "assistant", "content": final_msg})
+                        except Exception:
+                            pass
+                        return final_msg
                 else:
-                    print(f"\n🤖 Telugu Vermi Farms Assistant: {message.content}")
-            return message.content
+                    final_content = message_obj.content or ""
+                    print(f"\n🤖 [OpenAI] Assistant: {final_content}")
+                    try:
+                        self.redis_client.add_message({"role": "assistant", "content": final_content})
+                    except Exception:
+                        pass
+                    return final_content
         except Exception as e:
             print(f"Error: {e}")
             return None
@@ -327,10 +399,8 @@ class TeluguVermiFarmsClient:
                 #     print(f"Failed to initialize Gemini model: {model_err}")
                 #     return None
 
-                # Build initial contents with system prompt and prior history (provided by caller)
-                contents = []
                 contents.append({"role": "user", "parts": [{"text": system_prompt}]})
-                for msg in (history or [])[-30:]:
+                for msg in (history or [])[-50:]:
                     role = msg.get("role")
                     if role in ("user", "assistant"):
                         # If this is an assistant function_call record without content, skip textual echo
@@ -586,38 +656,7 @@ class TeluguVermiFarmsClient:
                     print(f"Error: {e}")
                     continue
 
-    async def transform_response_to_html(self, response: str):
-        try:
-            api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-            genai.configure(api_key=api_key)
-            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-            model = genai.GenerativeModel(model_name)
 
-            # Coerce input to a safe string to satisfy Gemini 'parts' requirements
-            if isinstance(response, str):
-                safe_response = response
-            else:
-                try:
-                    safe_response = json.dumps(response, ensure_ascii=False)
-                except Exception:
-                    safe_response = str(response or "")
-            if safe_response is None:
-                safe_response = ""
-
-            # Simpler prompt format: pass strings instead of structured parts
-            prompts = [html_transform_system_prompt or "", safe_response]
-            result = await asyncio.to_thread(model.generate_content, prompts)
-            text = _gemini_result_text(result)
-            return text or "<div></div>"
-        except Exception as e:
-            print(f"Error: {e}")
-            safe = response if isinstance(response, str) else str(response or "")
-            escaped = (
-                safe.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-            )
-            return f"<div><p>{escaped}</p></div>"
 
 
 async def main():

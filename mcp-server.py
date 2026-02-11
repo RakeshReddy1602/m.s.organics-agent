@@ -159,24 +159,28 @@ def get_products_count(q: Optional[str] = None) -> dict:
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}"}
 
-@mcp.tool(description="Create a new product.")
-def create_product(name: str, description: str, image_name: str, image_source_url: str, price_per_kg: float) -> dict:
+@mcp.tool(description="Fetch best-selling products.")
+def fetch_best_sellers(top_k: Optional[int] = 5) -> dict:
     """
-    Create a new product.
+    Fetch the top K best-selling products.
+
+    Args:
+        top_k: Number of top products to fetch (default: 5)
+    
+    Returns:
+        dict: List of best-selling products
     """
     try:
-        payload = {
-            "name": name,
-            "description": description,
-            "image_name": image_name,
-            "image_source_url": image_source_url,
-            "price_per_kg": price_per_kg,
-        }
-        response = requests.post(f"{API_BASE_URL}/product", json=payload, headers=get_auth_headers())
+        params = {}
+        if top_k:
+            params["topK"] = top_k
+        
+        response = requests.get(f"{API_BASE_URL}/product/best-sellers", params=params, headers=get_auth_headers())
         response.raise_for_status()
+        
         return response.json()
     except requests.exceptions.RequestException as e:
-        return {"error": f"Failed to create product: {str(e)}"}
+        return {"error": f"Failed to fetch best sellers: {str(e)}"}
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}"}
 
@@ -395,7 +399,7 @@ def confirm_order_by_admin(order_unique_id: str) -> dict:
         dict: Admin confirmation status and order details
     """
     try:
-        response = requests.put(f"{API_BASE_URL}/order/admin/confirm/{order_unique_id}")
+        response = requests.put(f"{API_BASE_URL}/order/admin/confirm/{order_unique_id}", headers=get_auth_headers())
         response.raise_for_status()
         
         return response.json()
@@ -416,7 +420,7 @@ def cancel_order_by_admin(order_unique_id: str) -> dict:
         dict: Cancellation status and order details
     """
     try:
-        response = requests.put(f"{API_BASE_URL}/order/admin/cancel/{order_unique_id}")
+        response = requests.put(f"{API_BASE_URL}/order/admin/cancel/{order_unique_id}", headers=get_auth_headers())
         response.raise_for_status()
         
         return response.json()
@@ -429,7 +433,8 @@ def cancel_order_by_admin(order_unique_id: str) -> dict:
 def fetch_orders(limit: Optional[int] = 10, offset: Optional[int] = 0, 
                 order_unique_id: Optional[str] = None, customer_name: Optional[str] = None,
                 customer_email: Optional[str] = None, customer_mobile: Optional[str] = None,
-                delivery_date_from: Optional[str] = None, delivery_date_to: Optional[str] = None) -> dict:
+                delivery_date_from: Optional[str] = None, delivery_date_to: Optional[str] = None,
+                status: Optional[int] = None) -> dict:
     """
     Fetch orders with optional filtering and pagination.
     
@@ -442,6 +447,7 @@ def fetch_orders(limit: Optional[int] = 10, offset: Optional[int] = 0,
         customer_mobile: Filter by customer mobile number
         delivery_date_from: Filter by delivery date from (ISO 8601 format)
         delivery_date_to: Filter by delivery date to (ISO 8601 format)
+        status: Filter by order status (1: Pending, 2: Confirmed, 3: Shipped, 4: Delivered, 5: Cancelled)
     
     Returns:
         dict: List of orders matching the criteria
@@ -464,6 +470,8 @@ def fetch_orders(limit: Optional[int] = 10, offset: Optional[int] = 0,
             params["deliveryDateFrom"] = delivery_date_from
         if delivery_date_to:
             params["deliveryDateTo"] = delivery_date_to
+        if status:
+            params["status"] = status
         
         response = requests.get(f"{API_BASE_URL}/order", params=params, headers=get_auth_headers())
         response.raise_for_status()
@@ -473,7 +481,138 @@ def fetch_orders(limit: Optional[int] = 10, offset: Optional[int] = 0,
         return {"error": f"Failed to fetch orders: {str(e)}"}
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}"}
+@mcp.tool(description="Create an order on behalf of a customer (Admin only).")
+def create_order_by_admin(
+    customer_name: str,
+    customer_mobile: str,
+    address_line1: str,
+    city: str,
+    district: str,
+    pin_code: str,
+    items: List[Dict[str, Any]],
+    max_date_required: str,
+    customer_email: Optional[str] = None
+) -> dict:
+    """
+    Create an order on behalf of a customer.
+    
+    Args:
+        customer_name: Name of the customer
+        customer_mobile: Mobile number of the customer
+        address_line1: Street address
+        city: City
+        district: District
+        pin_code: PIN/ZIP code
+        items: List of items, each containing "productId" (int) and "quantity" (number/int)
+               Example: [{"productId": 1, "quantity": 5}, {"productId": 2, "quantity": 10}]
+        max_date_required: Desired delivery date (ISO 8601 string, e.g., "2023-12-31")
+        customer_email: Optional email of the customer
+        
+    Returns:
+        dict: Created order details
+    """
+    try:
+        payload = {
+            "customer": {
+                "name": customer_name,
+                "mobile": customer_mobile,
+                "email": customer_email
+            },
+            "address": {
+                "addressLine1": address_line1,
+                "city": city,
+                "district": district,
+                "pinCode": pin_code
+            },
+            "items": items,
+            "maxDateRequired": max_date_required
+        }
+        
+        response = requests.post(f"{API_BASE_URL}/order/admin/create-order", json=payload, headers=get_auth_headers())
+        response.raise_for_status()
+        
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Failed to create order: {str(e)}"}
+    except Exception as e:
+        return {"error": f"Unexpected error: {str(e)}"}
 
+@mcp.tool(description="Check stock availability for a list of products.")
+def check_stock_availability(items: List[Dict[str, Any]]) -> dict:
+    """
+    Check if there is sufficient stock for the requested items.
+    
+    Args:
+        items: List of items, each containing "productId" (int) and "quantity" (number/int)
+               Example: [{"productId": 1, "quantity": 5}]
+               
+    Returns:
+        dict: Availability status for each product and overall result.
+    """
+    try:
+        product_ids = [str(item['productId']) for item in items]
+        product_ids_csv = ",".join(product_ids)
+        
+        # Fetch active batches for these products
+        params = {
+            "productIds": product_ids_csv,
+            "onlyActive": "true",
+            "limit": 1000  # Fetch enough batches
+        }
+        
+        response = requests.get(f"{API_BASE_URL}/stock-batch", params=params, headers=get_auth_headers())
+        response.raise_for_status()
+        batches_data = response.json()
+        
+        if not batches_data.get('success'):
+            return {"error": "Failed to fetch stock data"}
+            
+        batches = batches_data.get('data', {}).get('result', [])
+        
+        # Calculate available stock per product
+        # product_id -> available_quantity
+        availability_map: Dict[int, float] = {}
+        
+        for batch in batches:
+            pid = batch['fk_id_product']
+            available = batch['quantity_produced'] - batch['quantity_allocated']
+            if available > 0:
+                availability_map[pid] = availability_map.get(pid, 0) + available
+                
+        # Compare with requested
+        results = {}
+        all_available = True
+        
+        for item in items:
+            pid = item['productId']
+            # Ensure quantity is treated as a float, even if it comes as a string
+            try:
+                requested = float(item['quantity'])
+            except (ValueError, TypeError):
+                requested = 0.0
+            
+            available = availability_map.get(pid, 0)
+            
+            is_sufficient = available >= requested
+            if not is_sufficient:
+                all_available = False
+                
+            results[pid] = {
+                "requested": requested,
+                "available": available,
+                "sufficient": is_sufficient,
+                "shortage": max(0, requested - available)
+            }
+            
+        return {
+            "can_fulfill_all": all_available,
+            "details": results
+        }
+            
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Failed to check stock: {str(e)}"}
+    except Exception as e:
+        return {"error": f"Unexpected error checking stock: {str(e)}"}
 @mcp.tool(description="Fetch order details (allocations, product, customer) by orderIds or orderUniqueIds.")
 def fetch_order_details(order_ids_csv: Optional[str] = None, order_unique_ids_csv: Optional[str] = None) -> dict:
     """
@@ -504,7 +643,8 @@ def fetch_order_details(order_ids_csv: Optional[str] = None, order_unique_ids_cs
 @mcp.tool(description="Get orders count with optional filtering.")
 def get_orders_count(order_unique_id: Optional[str] = None, customer_name: Optional[str] = None,
                     customer_email: Optional[str] = None, customer_mobile: Optional[str] = None,
-                    delivery_date_from: Optional[str] = None, delivery_date_to: Optional[str] = None) -> dict:
+                    delivery_date_from: Optional[str] = None, delivery_date_to: Optional[str] = None,
+                    status: Optional[int] = None) -> dict:
     """
     Get orders count with optional filtering.
     
@@ -515,6 +655,7 @@ def get_orders_count(order_unique_id: Optional[str] = None, customer_name: Optio
         customer_mobile: Filter by customer mobile number
         delivery_date_from: Filter by delivery date from (ISO 8601 format)
         delivery_date_to: Filter by delivery date to (ISO 8601 format)
+        status: Filter by order status (1: Pending, 2: Confirmed, 3: Shipped, 4: Delivered, 5: Cancelled)
     
     Returns:
         dict: Count of orders matching the criteria
@@ -534,6 +675,8 @@ def get_orders_count(order_unique_id: Optional[str] = None, customer_name: Optio
             params["deliveryDateFrom"] = delivery_date_from
         if delivery_date_to:
             params["deliveryDateTo"] = delivery_date_to
+        if status:
+            params["status"] = status
         
         response = requests.get(f"{API_BASE_URL}/order/count", params=params, headers=get_auth_headers())
         response.raise_for_status()

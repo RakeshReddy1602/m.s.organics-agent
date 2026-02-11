@@ -45,27 +45,24 @@ async def handle_chat(sid, data):
             'conversationId': conversation_id
         }, room=sid)
         
-        # Get response from Gemini with user token for API calls
-        response = await assistant.chat_with_assistant_gemini(history, message, user_token)
+        # Get response using unified chat interface (handles Gemini/OpenAI switching)
+        response = await assistant.chat(history, message, user_token)
         
         if response:
-            # Transform to HTML
-            html_response = await assistant.transform_response_to_html(response)
-            
             # Stream the response word by word
-            words = (html_response or response).split(' ')
+            words = (response or "").split(' ')
             for i, word in enumerate(words):
                 await sio.emit('chat:stream', {
                     'chunk': word + ' ',
                     'index': i,
                     'conversationId': conversation_id
                 }, room=sid)
-                await asyncio.sleep(0.03)  # 30ms delay for streaming effect
+                await asyncio.sleep(0.01)  # Reduced delay for faster streaming
             
             # Signal completion
             await sio.emit('chat:complete', {
                 'conversationId': conversation_id,
-                'fullResponse': html_response or response
+                'fullResponse': response
             }, room=sid)
         else:
             await sio.emit('chat:error', {
@@ -75,8 +72,9 @@ async def handle_chat(sid, data):
             
     except Exception as e:
         print(f'❌ Chat error: {e}')
+        # Send generic error to user, log actual error
         await sio.emit('chat:error', {
-            'message': str(e),
+            'message': 'An internal error occurred. Please try again later.',
             'conversationId': conversation_id
         }, room=sid)
 

@@ -17,7 +17,7 @@ class RedisClient:
 
     def add_message(self, msg: dict):
         self.client.rpush(CHAT_KEY, json.dumps(msg))
-        self.client.ltrim(CHAT_KEY, -40, -1)  # keep last 40 messages
+        self.client.ltrim(CHAT_KEY, -60, -1)  # keep last 60 messages
         self.client.expire(CHAT_KEY, 3*24*3600)  # 3 days TTL
 
     def get_last_messages(self):
@@ -25,3 +25,11 @@ class RedisClient:
         messages = [json.loads(m) for m in msgs]
         print("All messages in Redis:", messages)
         return messages
+
+    def clear_history(self):
+        """Clear the chat history from Redis."""
+        try:
+            self.client.delete(CHAT_KEY)
+            print("Redis chat history cleared.")
+        except Exception as e:
+            print(f"Error clearing Redis history: {e}")

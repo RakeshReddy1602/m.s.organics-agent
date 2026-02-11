@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import socketio
 from socket_server import sio
 from auth_middleware import get_current_user, JWTPayload
+import os
 
 # Initialize FastAPI
 app = FastAPI(
@@ -53,16 +54,24 @@ async def chat(request: Request, user: JWTPayload = Depends(get_current_user)):
         # Fetch history through assistant method so we can change storage later without touching server
         history = assistant.get_history()
         print('History ====', history)
-        # response = await assistant.chat_with_assistant(history, user_msg)
-        response = await assistant.chat_with_assistant_gemini(history, user_msg)
-        # print('Response ====', response)
-        response = await assistant.transform_response_to_html(response)
+        # Use unified chat method which handles provider selection
+        response = await assistant.chat(history, user_msg)
+            
         return JSONResponse({"response": response}, status_code=200)
 
         
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clear Redis conversation history on server shutdown."""
+    print("Shutting down server... Clearing Redis history.")
+    try:
+        assistant.redis_client.clear_history()
+    except Exception as e:
+        print(f"Error during shutdown cleanup: {e}")
 
 # Wrap FastAPI with Socket.IO ASGI app
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
