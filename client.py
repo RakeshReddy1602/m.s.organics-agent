@@ -61,6 +61,13 @@ class TeluguVermiFarmsClient:
             self.redis_client.client.delete(CHAT_KEY)
         except Exception:
             pass
+        self.AVAILABLE_MODELS = [
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-flash-latest"
+        ]
 
     def get_history(self) -> list[dict]:
         """Fetch last messages from Redis for the agent."""
@@ -142,6 +149,30 @@ class TeluguVermiFarmsClient:
             })
         # Gemini expects tools as a list, each with function_declarations
         return [{"function_declarations": function_declarations}]
+
+    async def _generate_content_with_fallback(self, contents: List[Any], tools: List[Any]) -> Any:
+        """Attempts to generate content using a list of prioritized models."""
+        
+        # Prioritize env var model if set
+        models = list(self.AVAILABLE_MODELS)
+        env_model = os.getenv("GEMINI_MODEL")
+        if env_model and env_model not in models:
+            models.insert(0, env_model)
+            
+        last_error = None
+        for model_name in models:
+            try:
+                # print(f"Trying model: {model_name}")
+                model = genai.GenerativeModel(model_name, tools=tools)
+                result = await asyncio.to_thread(model.generate_content, contents)
+                return result
+            except Exception as e:
+                print(f"⚠️ Model {model_name} failed: {e}")
+                last_error = e
+                continue
+        
+        print(f"❌ All models failed. Last error: {last_error}")
+        return None
 
     
     async def _call_tool_safely(self, orchestrator: MCPOrchestrator, tool_name: str, args: dict, call_id: str):
@@ -288,12 +319,13 @@ class TeluguVermiFarmsClient:
                 print(f"Got {len(tools_specs)} tool specs")
                 gemini_tools = self.get_gemini_tools_from_specs(tools_specs)
 
-                try:
-                    model = genai.GenerativeModel(model_name, tools=gemini_tools)
-                    print("Gemini model initialized successfully")
-                except Exception as model_err:
-                    print(f"Failed to initialize Gemini model: {model_err}")
-                    return None
+                # model initialization removed as it's done per-request in retry loop
+                # try:
+                #     model = genai.GenerativeModel(model_name, tools=gemini_tools)
+                #     print("Gemini model initialized successfully")
+                # except Exception as model_err:
+                #     print(f"Failed to initialize Gemini model: {model_err}")
+                #     return None
 
                 # Build initial contents with system prompt and prior history (provided by caller)
                 contents = []
@@ -367,12 +399,13 @@ class TeluguVermiFarmsClient:
 
                 # First turn
                 print("Sending request to Gemini...")
-                try:
-                    result = await asyncio.to_thread(model.generate_content, contents)
-                    print("Received response from Gemini")
-                except Exception as e:
-                    print(f"Gemini generate_content failed: {e}")
-                    return None
+                result = await self._generate_content_with_fallback(contents, gemini_tools)
+                
+                if not result:
+                     print("Failed to get response from any model")
+                     return None
+
+                print("Received response from Gemini")
 
                 iterations = 0
                 while iterations < self.MAX_ITERATIONS:
@@ -451,8 +484,11 @@ class TeluguVermiFarmsClient:
 
                     contents.extend(function_response_messages)
                     # Ask model to continue with the new tool results
-                    result = await asyncio.to_thread(model.generate_content, contents)
-
+                    result = await self._generate_content_with_fallback(contents, gemini_tools)
+                    if not result:
+                        print("Failed to get response during tool loop")
+                        return None
+                
                 return None
 
         except Exception as e:

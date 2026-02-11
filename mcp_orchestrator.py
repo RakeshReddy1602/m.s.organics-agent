@@ -10,7 +10,7 @@ class MCPOrchestrator:
     def __init__(self, admin_agent_url: Optional[str] = None) -> None:
         # Assign URL for MCP server, defaulting to the server in mcp-server.py if not provided
         import os
-        self.admin_agent_url = admin_agent_url or os.getenv("MCP_SERVER_URL", "http://127.0.0.1:6280/mcp")
+        self.admin_agent_url = admin_agent_url or os.getenv("MCP_SERVER_URL", "http://127.0.0.1:6280/sse")
         self._clients: Dict[str, MCPClient] = {}
         self._stack: Optional[AsyncExitStack] = None
         print(f"MCP Orchestrator initialized with URL: {self.admin_agent_url}")
